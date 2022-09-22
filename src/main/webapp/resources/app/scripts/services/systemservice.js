@@ -42,6 +42,7 @@ app.service('SystemService', ['$http', function ($http) {
   this.saveRule = function (rule) {
     var param = {
       id: rule.id,
+      app: rule.app,
     };
     if (rule.grade == 0) {// avgLoad
       param.highestSystemLoad = rule.highestSystemLoad;

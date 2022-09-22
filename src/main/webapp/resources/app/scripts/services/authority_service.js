@@ -34,6 +34,10 @@ angular.module('sentinelDashboardApp').service('AuthorityRuleService', ['$http',
     this.deleteRule = function (entity) {
         return $http({
             url: '/authority/rule/' + entity.id,
+            data: entity,
+            headers: {
+                'Content-type': 'application/json'
+            },
             method: 'DELETE'
         });
     };

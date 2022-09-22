@@ -15,13 +15,18 @@
  */
 package com.alibaba.csp.sentinel.dashboard.controller;
 
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import com.alibaba.csp.sentinel.dashboard.auth.AuthAction;
 import com.alibaba.csp.sentinel.dashboard.client.SentinelApiClient;
+import com.alibaba.csp.sentinel.dashboard.datasource.entity.rule.FlowRuleEntity;
 import com.alibaba.csp.sentinel.dashboard.discovery.MachineInfo;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService.PrivilegeType;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRuleProvider;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRulePublisher;
 import com.alibaba.csp.sentinel.slots.block.RuleConstant;
 import com.alibaba.csp.sentinel.util.StringUtil;
 
@@ -31,7 +36,9 @@ import com.alibaba.csp.sentinel.dashboard.repository.rule.RuleRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -41,6 +48,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import static java.util.stream.Collectors.toList;
 
 /**
  * @author Eric Zhao
@@ -53,9 +62,12 @@ public class AuthorityRuleController {
     private final Logger logger = LoggerFactory.getLogger(AuthorityRuleController.class);
 
     @Autowired
-    private SentinelApiClient sentinelApiClient;
+    @Qualifier("authorityRuleNacosProvider")
+    private DynamicRuleProvider<List<AuthorityRuleEntity>> ruleProvider;
     @Autowired
-    private RuleRepository<AuthorityRuleEntity, Long> repository;
+    @Qualifier("authorityRuleNacosPublisher")
+    private DynamicRulePublisher<List<AuthorityRuleEntity>> rulePublisher;
+
 
     @GetMapping("/rules")
     @AuthAction(PrivilegeType.READ_RULE)
@@ -65,16 +77,8 @@ public class AuthorityRuleController {
         if (StringUtil.isEmpty(app)) {
             return Result.ofFail(-1, "app cannot be null or empty");
         }
-        if (StringUtil.isEmpty(ip)) {
-            return Result.ofFail(-1, "ip cannot be null or empty");
-        }
-        if (port == null || port <= 0) {
-            return Result.ofFail(-1, "Invalid parameter: port");
-        }
         try {
-            List<AuthorityRuleEntity> rules = sentinelApiClient.fetchAuthorityRulesOfMachine(app, ip, port);
-            rules = repository.saveAll(rules);
-            return Result.ofSuccess(rules);
+            return Result.ofSuccess(ruleProvider.getRules(app));
         } catch (Throwable throwable) {
             logger.error("Error when querying authority rules", throwable);
             return Result.ofFail(-1, throwable.getMessage());
@@ -122,13 +126,17 @@ public class AuthorityRuleController {
         entity.setGmtCreate(date);
         entity.setGmtModified(date);
         try {
-            entity = repository.save(entity);
+            List<AuthorityRuleEntity> rules = ruleProvider.getRules(entity.getApp());
+            Long id = 0L;
+            if (rules.size() != 0) {
+                id = rules.stream().max(Comparator.comparing(AuthorityRuleEntity::getId)).get().getId();
+            }
+            entity.setId(id + 1L);
+            rules.add(entity);
+            rulePublisher.publish(entity.getApp(), rules);
         } catch (Throwable throwable) {
             logger.error("Failed to add authority rule", throwable);
             return Result.ofThrowable(-1, throwable);
-        }
-        if (!publishRules(entity.getApp(), entity.getIp(), entity.getPort())) {
-            logger.info("Publish authority rules failed after rule add");
         }
         return Result.ofSuccess(entity);
     }
@@ -140,52 +148,46 @@ public class AuthorityRuleController {
         if (id == null || id <= 0) {
             return Result.ofFail(-1, "Invalid id");
         }
-        Result<AuthorityRuleEntity> checkResult = checkEntityInternal(entity);
-        if (checkResult != null) {
-            return checkResult;
-        }
-        entity.setId(id);
-        Date date = new Date();
-        entity.setGmtCreate(null);
-        entity.setGmtModified(date);
         try {
-            entity = repository.save(entity);
-            if (entity == null) {
-                return Result.ofFail(-1, "Failed to save authority rule");
+            List<AuthorityRuleEntity> rules = ruleProvider.getRules(entity.getApp());
+            AuthorityRuleEntity oldEntity = rules.stream().filter(item -> item.getId().equals(id)).limit(1).collect(toList()).get(0);
+            if (oldEntity == null) {
+                return Result.ofFail(-1, "id " + id + " does not exist");
             }
+            BeanUtils.copyProperties(entity, oldEntity);
+
+            Result<AuthorityRuleEntity> checkResult = checkEntityInternal(entity);
+            if (checkResult != null) {
+                return checkResult;
+            }
+
+            oldEntity.setGmtModified(new Date());
+
+            rulePublisher.publish(entity.getApp(), rules);
         } catch (Throwable throwable) {
             logger.error("Failed to save authority rule", throwable);
             return Result.ofThrowable(-1, throwable);
-        }
-        if (!publishRules(entity.getApp(), entity.getIp(), entity.getPort())) {
-            logger.info("Publish authority rules failed after rule update");
         }
         return Result.ofSuccess(entity);
     }
 
     @DeleteMapping("/rule/{id}")
     @AuthAction(PrivilegeType.DELETE_RULE)
-    public Result<Long> apiDeleteRule(@PathVariable("id") Long id) {
+    public Result<Long> apiDeleteRule(@PathVariable("id") Long id,
+                                      @RequestBody FlowRuleEntity entity) {
         if (id == null) {
             return Result.ofFail(-1, "id cannot be null");
         }
-        AuthorityRuleEntity oldEntity = repository.findById(id);
-        if (oldEntity == null) {
-            return Result.ofSuccess(null);
-        }
         try {
-            repository.delete(id);
+            List<AuthorityRuleEntity> rules = ruleProvider.getRules(entity.getApp());
+
+            IntStream.range(0, rules.size()).filter(i ->
+                    rules.get(i).getId().equals(id)).boxed().findFirst().map(i -> rules.remove((int) i));
+
+            rulePublisher.publish(entity.getApp(), rules);
         } catch (Exception e) {
             return Result.ofFail(-1, e.getMessage());
         }
-        if (!publishRules(oldEntity.getApp(), oldEntity.getIp(), oldEntity.getPort())) {
-            logger.error("Publish authority rules failed after rule delete");
-        }
         return Result.ofSuccess(id);
-    }
-
-    private boolean publishRules(String app, String ip, Integer port) {
-        List<AuthorityRuleEntity> rules = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.setAuthorityRuleOfMachine(app, ip, port, rules);
     }
 }

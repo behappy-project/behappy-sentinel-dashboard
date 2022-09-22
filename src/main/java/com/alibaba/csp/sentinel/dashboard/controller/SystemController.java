@@ -15,12 +15,16 @@
  */
 package com.alibaba.csp.sentinel.dashboard.controller;
 
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import com.alibaba.csp.sentinel.dashboard.auth.AuthAction;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService.PrivilegeType;
 import com.alibaba.csp.sentinel.dashboard.repository.rule.RuleRepository;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRuleProvider;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRulePublisher;
 import com.alibaba.csp.sentinel.util.StringUtil;
 
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.rule.SystemRuleEntity;
@@ -31,9 +35,12 @@ import com.alibaba.csp.sentinel.dashboard.domain.Result;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import static java.util.stream.Collectors.toList;
 
 /**
  * @author leyou(lihao)
@@ -45,9 +52,11 @@ public class SystemController {
     private final Logger logger = LoggerFactory.getLogger(SystemController.class);
 
     @Autowired
-    private RuleRepository<SystemRuleEntity, Long> repository;
+    @Qualifier("systemRuleNacosProvider")
+    private DynamicRuleProvider<List<SystemRuleEntity>> ruleProvider;
     @Autowired
-    private SentinelApiClient sentinelApiClient;
+    @Qualifier("systemRuleNacosPublisher")
+    private DynamicRulePublisher<List<SystemRuleEntity>> rulePublisher;
 
     private <R> Result<R> checkBasicParams(String app, String ip, Integer port) {
         if (StringUtil.isEmpty(app)) {
@@ -74,9 +83,7 @@ public class SystemController {
             return checkResult;
         }
         try {
-            List<SystemRuleEntity> rules = sentinelApiClient.fetchSystemRuleOfMachine(app, ip, port);
-            rules = repository.saveAll(rules);
-            return Result.ofSuccess(rules);
+            return Result.ofSuccess(ruleProvider.getRules(app));
         } catch (Throwable throwable) {
             logger.error("Query machine system rules error", throwable);
             return Result.ofThrowable(-1, throwable);
@@ -148,13 +155,17 @@ public class SystemController {
         entity.setGmtCreate(date);
         entity.setGmtModified(date);
         try {
-            entity = repository.save(entity);
+            List<SystemRuleEntity> rules = ruleProvider.getRules(entity.getApp());
+            Long id = 0L;
+            if (rules.size() != 0) {
+                id = rules.stream().max(Comparator.comparing(SystemRuleEntity::getId)).get().getId();
+            }
+            entity.setId(id + 1L);
+            rules.add(entity);
+            rulePublisher.publish(entity.getApp(), rules);
         } catch (Throwable throwable) {
             logger.error("Add SystemRule error", throwable);
             return Result.ofThrowable(-1, throwable);
-        }
-        if (!publishRules(app, ip, port)) {
-            logger.warn("Publish system rules fail after rule add");
         }
         return Result.ofSuccess(entity);
     }
@@ -166,85 +177,79 @@ public class SystemController {
         if (id == null) {
             return Result.ofFail(-1, "id can't be null");
         }
-        SystemRuleEntity entity = repository.findById(id);
-        if (entity == null) {
-            return Result.ofFail(-1, "id " + id + " dose not exist");
-        }
-
-        if (StringUtil.isNotBlank(app)) {
-            entity.setApp(app.trim());
-        }
-        if (highestSystemLoad != null) {
-            if (highestSystemLoad < 0) {
-                return Result.ofFail(-1, "highestSystemLoad must >= 0");
-            }
-            entity.setHighestSystemLoad(highestSystemLoad);
-        }
-        if (highestCpuUsage != null) {
-            if (highestCpuUsage < 0) {
-                return Result.ofFail(-1, "highestCpuUsage must >= 0");
-            }
-            if (highestCpuUsage > 1) {
-                return Result.ofFail(-1, "highestCpuUsage must <= 1");
-            }
-            entity.setHighestCpuUsage(highestCpuUsage);
-        }
-        if (avgRt != null) {
-            if (avgRt < 0) {
-                return Result.ofFail(-1, "avgRt must >= 0");
-            }
-            entity.setAvgRt(avgRt);
-        }
-        if (maxThread != null) {
-            if (maxThread < 0) {
-                return Result.ofFail(-1, "maxThread must >= 0");
-            }
-            entity.setMaxThread(maxThread);
-        }
-        if (qps != null) {
-            if (qps < 0) {
-                return Result.ofFail(-1, "qps must >= 0");
-            }
-            entity.setQps(qps);
-        }
-        Date date = new Date();
-        entity.setGmtModified(date);
+        SystemRuleEntity oldEntity;
         try {
-            entity = repository.save(entity);
+            List<SystemRuleEntity> rules = ruleProvider.getRules(app.trim());
+            oldEntity = rules.stream().filter(item -> item.getId().equals(id)).limit(1).collect(toList()).get(0);
+            if (oldEntity == null) {
+                return Result.ofFail(-1, "id " + id + " does not exist");
+            }
+
+            if (StringUtil.isNotBlank(app)) {
+                oldEntity.setApp(app.trim());
+            }
+            if (highestSystemLoad != null) {
+                if (highestSystemLoad < 0) {
+                    return Result.ofFail(-1, "highestSystemLoad must >= 0");
+                }
+                oldEntity.setHighestSystemLoad(highestSystemLoad);
+            }
+            if (highestCpuUsage != null) {
+                if (highestCpuUsage < 0) {
+                    return Result.ofFail(-1, "highestCpuUsage must >= 0");
+                }
+                if (highestCpuUsage > 1) {
+                    return Result.ofFail(-1, "highestCpuUsage must <= 1");
+                }
+                oldEntity.setHighestCpuUsage(highestCpuUsage);
+            }
+            if (avgRt != null) {
+                if (avgRt < 0) {
+                    return Result.ofFail(-1, "avgRt must >= 0");
+                }
+                oldEntity.setAvgRt(avgRt);
+            }
+            if (maxThread != null) {
+                if (maxThread < 0) {
+                    return Result.ofFail(-1, "maxThread must >= 0");
+                }
+                oldEntity.setMaxThread(maxThread);
+            }
+            if (qps != null) {
+                if (qps < 0) {
+                    return Result.ofFail(-1, "qps must >= 0");
+                }
+                oldEntity.setQps(qps);
+            }
+
+            oldEntity.setGmtModified(new Date());
+
+            rulePublisher.publish(oldEntity.getApp(), rules);
         } catch (Throwable throwable) {
             logger.error("save error:", throwable);
             return Result.ofThrowable(-1, throwable);
         }
-        if (!publishRules(entity.getApp(), entity.getIp(), entity.getPort())) {
-            logger.info("publish system rules fail after rule update");
-        }
-        return Result.ofSuccess(entity);
+        return Result.ofSuccess(oldEntity);
     }
 
     @RequestMapping("/delete.json")
     @AuthAction(PrivilegeType.DELETE_RULE)
-    public Result<?> delete(Long id) {
+    public Result<?> delete(Long id, String app) {
         if (id == null) {
             return Result.ofFail(-1, "id can't be null");
         }
-        SystemRuleEntity oldEntity = repository.findById(id);
-        if (oldEntity == null) {
-            return Result.ofSuccess(null);
-        }
         try {
-            repository.delete(id);
+            List<SystemRuleEntity> rules = ruleProvider.getRules(app.trim());
+
+            IntStream.range(0, rules.size()).filter(i ->
+                    rules.get(i).getId().equals(id)).boxed().findFirst().map(i -> rules.remove((int) i));
+
+            rulePublisher.publish(app.trim(), rules);
         } catch (Throwable throwable) {
             logger.error("delete error:", throwable);
             return Result.ofThrowable(-1, throwable);
         }
-        if (!publishRules(oldEntity.getApp(), oldEntity.getIp(), oldEntity.getPort())) {
-            logger.info("publish system rules fail after rule delete");
-        }
         return Result.ofSuccess(id);
     }
 
-    private boolean publishRules(String app, String ip, Integer port) {
-        List<SystemRuleEntity> rules = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.setSystemRuleOfMachine(app, ip, port, rules);
-    }
 }
