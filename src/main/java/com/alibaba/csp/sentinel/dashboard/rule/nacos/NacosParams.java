@@ -20,6 +20,10 @@ public class NacosParams {
     private String paramFlowDataPostfix;
     private String authorityDataPostfix;
 
+    private String gatewayDataIdPostfix;
+
+    private String gatewayApiDataIdPostfix;
+
     private Integer checkCount;
 
 
@@ -28,6 +32,9 @@ public class NacosParams {
     public static final String SYSTEM_DATA_ID_POSTFIX = "-system-rules";
     public static final String PARAM_FLOW_DATA_ID_POSTFIX = "-param-flow-rules";
     public static final String AUTHORITY_DATA_ID_POSTFIX = "-authority-rules";
+    public static final String GATEWAY_DATA_ID_POSTFIX = "-gw-rules";
+    public static final String GATEWAY_API_DATA_ID_POSTFIX = "-gw-api-rules";
+
     public static final Integer CHECK_COUNT = 6;
 
     public String getServerAddr() {
@@ -107,6 +114,28 @@ public class NacosParams {
 
     public void setAuthorityDataPostfix(String authorityDataPostfix) {
         this.authorityDataPostfix = authorityDataPostfix;
+    }
+
+    public String getGatewayDataIdPostfix() {
+        if (gatewayDataIdPostfix == null) {
+            return GATEWAY_DATA_ID_POSTFIX;
+        }
+        return gatewayDataIdPostfix;
+    }
+
+    public void setGatewayDataIdPostfix(String gatewayDataIdPostfix) {
+        this.gatewayDataIdPostfix = gatewayDataIdPostfix;
+    }
+
+    public String getGatewayApiDataIdPostfix() {
+        if (gatewayDataIdPostfix == null) {
+            return GATEWAY_API_DATA_ID_POSTFIX;
+        }
+        return gatewayApiDataIdPostfix;
+    }
+
+    public void setGatewayApiDataIdPostfix(String gatewayApiDataIdPostfix) {
+        this.gatewayApiDataIdPostfix = gatewayApiDataIdPostfix;
     }
 
     public Integer getCheckCount() {

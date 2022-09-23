@@ -20,23 +20,30 @@ import com.alibaba.csp.sentinel.dashboard.auth.AuthService;
 import com.alibaba.csp.sentinel.dashboard.client.SentinelApiClient;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiDefinitionEntity;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiPredicateItemEntity;
+import com.alibaba.csp.sentinel.dashboard.datasource.entity.rule.AuthorityRuleEntity;
+import com.alibaba.csp.sentinel.dashboard.datasource.entity.rule.ParamFlowRuleEntity;
 import com.alibaba.csp.sentinel.dashboard.discovery.MachineInfo;
 import com.alibaba.csp.sentinel.dashboard.domain.Result;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.AddApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.ApiPredicateItemVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.UpdateApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.repository.gateway.InMemApiDefinitionStore;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRuleProvider;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRulePublisher;
 import com.alibaba.csp.sentinel.util.StringUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.*;
+import java.util.stream.IntStream;
 
 import static com.alibaba.csp.sentinel.adapter.gateway.common.SentinelGatewayConstants.*;
+import static java.util.stream.Collectors.toList;
 
 /**
  * Gateway api Controller for manage gateway api definitions.
@@ -51,10 +58,12 @@ public class GatewayApiController {
     private final Logger logger = LoggerFactory.getLogger(GatewayApiController.class);
 
     @Autowired
-    private InMemApiDefinitionStore repository;
+    @Qualifier("gatewayApiNacosProvider")
+    private DynamicRuleProvider<List<ApiDefinitionEntity>> ruleProvider;
 
     @Autowired
-    private SentinelApiClient sentinelApiClient;
+    @Qualifier("gatewayApiNacosPublisher")
+    private DynamicRulePublisher<List<ApiDefinitionEntity>> rulePublisher;
 
     @GetMapping("/list.json")
     @AuthAction(AuthService.PrivilegeType.READ_RULE)
@@ -71,8 +80,7 @@ public class GatewayApiController {
         }
 
         try {
-            List<ApiDefinitionEntity> apis = sentinelApiClient.fetchApis(app, ip, port).get();
-            repository.saveAll(apis);
+            List<ApiDefinitionEntity> apis = ruleProvider.getRules(app);
             return Result.ofSuccess(apis);
         } catch (Throwable throwable) {
             logger.error("queryApis error:", throwable);
@@ -139,25 +147,28 @@ public class GatewayApiController {
         }
         entity.setPredicateItems(new LinkedHashSet<>(predicateItemEntities));
 
-        // 检查API名称不能重复
-        List<ApiDefinitionEntity> allApis = repository.findAllByMachine(MachineInfo.of(app.trim(), ip.trim(), port));
-        if (allApis.stream().map(o -> o.getApiName()).anyMatch(o -> o.equals(apiName.trim()))) {
-            return Result.ofFail(-1, "apiName exists: " + apiName);
-        }
+
 
         Date date = new Date();
         entity.setGmtCreate(date);
         entity.setGmtModified(date);
 
         try {
-            entity = repository.save(entity);
+            // 检查API名称不能重复
+            List<ApiDefinitionEntity> rules = ruleProvider.getRules(app.trim());
+            if (rules.stream().map(o -> o.getApiName()).anyMatch(o -> o.equals(apiName.trim()))) {
+                return Result.ofFail(-1, "apiName exists: " + apiName);
+            }
+            Long id = 0L;
+            if (rules.size() != 0) {
+                id = rules.stream().max(Comparator.comparing(ApiDefinitionEntity::getId)).get().getId();
+            }
+            entity.setId(id + 1L);
+            rules.add(entity);
+            rulePublisher.publish(entity.getApp(), rules);
         } catch (Throwable throwable) {
             logger.error("add gateway api error:", throwable);
             return Result.ofThrowable(-1, throwable);
-        }
-
-        if (!publishApis(app, ip, port)) {
-            logger.warn("publish gateway apis fail after add");
         }
 
         return Result.ofSuccess(entity);
@@ -174,11 +185,6 @@ public class GatewayApiController {
         Long id = reqVo.getId();
         if (id == null) {
             return Result.ofFail(-1, "id can't be null");
-        }
-
-        ApiDefinitionEntity entity = repository.findById(id);
-        if (entity == null) {
-            return Result.ofFail(-1, "api does not exist, id=" + id);
         }
 
         // 匹配规则列表
@@ -207,54 +213,42 @@ public class GatewayApiController {
 
             predicateItemEntities.add(predicateItemEntity);
         }
-        entity.setPredicateItems(new LinkedHashSet<>(predicateItemEntities));
-
-        Date date = new Date();
-        entity.setGmtModified(date);
 
         try {
-            entity = repository.save(entity);
+            List<ApiDefinitionEntity> rules = ruleProvider.getRules(reqVo.getApp());
+            ApiDefinitionEntity oldEntity = rules.stream().filter(item -> item.getId().equals(id)).limit(1).collect(toList()).get(0);
+            if (oldEntity == null) {
+                return Result.ofFail(-1, "api does not exist, id=" + id);
+            }
+
+            oldEntity.setPredicateItems(new LinkedHashSet<>(predicateItemEntities));
+            oldEntity.setGmtModified(new Date());
+            rulePublisher.publish(oldEntity.getApp(), rules);
+            return Result.ofSuccess(oldEntity);
+
         } catch (Throwable throwable) {
             logger.error("update gateway api error:", throwable);
             return Result.ofThrowable(-1, throwable);
         }
-
-        if (!publishApis(app, entity.getIp(), entity.getPort())) {
-            logger.warn("publish gateway apis fail after update");
-        }
-
-        return Result.ofSuccess(entity);
     }
 
     @PostMapping("/delete.json")
     @AuthAction(AuthService.PrivilegeType.DELETE_RULE)
-
-    public Result<Long> deleteApi(Long id) {
+    public Result<Long> deleteApi(Long id,String app) {
         if (id == null) {
             return Result.ofFail(-1, "id can't be null");
         }
-
-        ApiDefinitionEntity oldEntity = repository.findById(id);
-        if (oldEntity == null) {
-            return Result.ofSuccess(null);
-        }
-
         try {
-            repository.delete(id);
+            List<ApiDefinitionEntity> rules = ruleProvider.getRules(app);
+            IntStream.range(0, rules.size()).filter(i ->
+                    rules.get(i).getId().equals(id)).boxed().findFirst().map(i -> rules.remove((int) i));
+            rulePublisher.publish(app, rules);
         } catch (Throwable throwable) {
             logger.error("delete gateway api error:", throwable);
             return Result.ofThrowable(-1, throwable);
         }
 
-        if (!publishApis(oldEntity.getApp(), oldEntity.getIp(), oldEntity.getPort())) {
-            logger.warn("publish gateway apis fail after delete");
-        }
-
         return Result.ofSuccess(id);
     }
 
-    private boolean publishApis(String app, String ip, Integer port) {
-        List<ApiDefinitionEntity> apis = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.modifyApis(app, ip, port, apis);
-    }
 }
