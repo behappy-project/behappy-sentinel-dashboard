@@ -1,16 +1,19 @@
 package com.alibaba.csp.sentinel.dashboard.rule.nacos;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.stereotype.Component;
 
 /**
  * @author Chaim
  * @date 2021/11/13 18:02
  */
-@Component
+@Configuration
 @ConfigurationProperties(prefix = "spring.cloud.sentinel.datasource.nacos")
 public class NacosParams {
     private String serverAddr;
+    private String username;
+    private String password;
     private String groupId;
     private String namespace;
 
@@ -27,6 +30,11 @@ public class NacosParams {
     private Integer checkCount;
 
 
+    public static final String SERVER_ADDR = "127.0.0.1:8848";
+    public static final String GROUP_ID = "DEFAULT_GROUP";
+    public static final String NAMESPACE = "";
+    public static final String USERNAME = "nacos";
+    public static final String PASSWORD = "nacos";
     public static final String FLOW_DATA_ID_POSTFIX = "-flow-rules";
     public static final String DEGRADE_DATA_ID_POSTFIX = "-degrade-rules";
     public static final String SYSTEM_DATA_ID_POSTFIX = "-system-rules";
@@ -34,10 +42,12 @@ public class NacosParams {
     public static final String AUTHORITY_DATA_ID_POSTFIX = "-authority-rules";
     public static final String GATEWAY_DATA_ID_POSTFIX = "-gw-rules";
     public static final String GATEWAY_API_DATA_ID_POSTFIX = "-gw-api-rules";
-
     public static final Integer CHECK_COUNT = 6;
 
     public String getServerAddr() {
+        if (serverAddr == null) {
+            return SERVER_ADDR;
+        }
         return serverAddr;
     }
 
@@ -46,6 +56,9 @@ public class NacosParams {
     }
 
     public String getGroupId() {
+        if (groupId == null) {
+            return GROUP_ID;
+        }
         return groupId;
     }
 
@@ -54,6 +67,9 @@ public class NacosParams {
     }
 
     public String getNamespace() {
+        if (namespace == null) {
+            return NAMESPACE;
+        }
         return namespace;
     }
 
@@ -136,6 +152,28 @@ public class NacosParams {
 
     public void setGatewayApiDataIdPostfix(String gatewayApiDataIdPostfix) {
         this.gatewayApiDataIdPostfix = gatewayApiDataIdPostfix;
+    }
+
+    public String getUsername() {
+        if (username == null) {
+            return USERNAME;
+        }
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getPassword() {
+        if (password == null) {
+            return PASSWORD;
+        }
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
     }
 
     public Integer getCheckCount() {

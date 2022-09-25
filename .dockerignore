@@ -1,0 +1,11 @@
+*.md
+.git
+.idea
+.mvn
+.dockerignore
+.gitignore
+HELP.md
+mvnw
+mvnw.cmd
+*.iml
+target

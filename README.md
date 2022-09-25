@@ -11,6 +11,9 @@ Sentinel 控制台是流量控制、熔断降级规则统一配置和管理的�
 使用如下命令将代码打包成一个 fat jar:
 
 ```bash
+# 前端(6.x < node < 12.x)
+npm i && npm run build
+# 后端
 mvn clean package
 ```
 
@@ -52,6 +55,9 @@ java -Dserver.port=8080 \
 确保客户端有访问量，**Sentinel 会在客户端首次调用的时候进行初始化，开始向控制台发送心跳包**，将客户端纳入到控制台的管辖之下。
 
 客户端接入的详细步骤请参考 [Wiki 文档](https://github.com/alibaba/Sentinel/wiki/%E6%8E%A7%E5%88%B6%E5%8F%B0#3-%E5%AE%A2%E6%88%B7%E7%AB%AF%E6%8E%A5%E5%85%A5%E6%8E%A7%E5%88%B6%E5%8F%B0)。
+
+### 2.1 测试代码,仓库地址
+[test-sentinel](https://github.com/behappy-other/test-sentinel)
 
 ## 3. 验证是否接入成功
 
