@@ -18,4 +18,4 @@ RUN ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 ARG JAR_FILE=/user/src/app/target/*.jar
 ENV JAVA_OPTS="-Xms256m -Xmx256m -Dfile.encoding=UTF-8 -Djava.security.egd=file:/dev/./urandom"
 COPY --from=build ${JAR_FILE} app.jar
-ENTRYPOINT ["sh","-c","java -jar app.jar ${JAVA_OPTS}"]
+ENTRYPOINT ["sh","-c","java ${JAVA_OPTS} -jar app.jar"]
