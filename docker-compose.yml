@@ -1,0 +1,14 @@
+version: '3'
+services:
+  behappy-sentinel-dashboard:
+    restart: 'always'
+    privileged: true
+    container_name: behappy-sentinel-dashboard
+    image: wangxiaowu950330/behappy-sentinel-dashboard:v1.8.5-nacos
+    # 修改环境变量
+#    environment:
+#      JAVA_OPTS: "-Xms256m -Xmx256m -Dauth.password=123456 -Dfile.encoding=UTF-8 -Djava.security.egd=file:/dev/./urandom"
+    ports:
+      - "8858:8858"
+    volumes:
+      - /var/log/sentinel:/var/log/sentinel
