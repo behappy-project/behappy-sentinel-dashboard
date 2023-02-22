@@ -29,3 +29,11 @@ Sentinel 控制台是流量控制、熔断降级规则统一配置和管理的�
 - docker run --name behappy-sentinel-dashboard -d -p 8858:8858 wangxiaowu950330/behappy-sentinel-dashboard:v1.8.5-nacos
 
 - docker-compose up -d
+
+## 5.可使用环境变量方式配置nacos参数
+
+如：
+SPRING_CLOUD_SENTINEL_DATASOURCE_NACOS_SERVERADDR: 127.0.0.1:8848
+
+> 注意：环境变量统一采用大写字母，不允许使用.-符号，采用下划线“_”取代点“.”  减号“-”直接删除。
+> 说明：系统环境变量方式自由度高，可配合k8s部署脚本，动态切换到各运行环境
