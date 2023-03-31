@@ -1,3 +1,6 @@
+## 技术沟通群
+<img src="https://raw.githubusercontent.com/wang-xiaowu/picture_repository/master/behappy_group.jpg" width="300px">
+
 # Sentinel 控制台(完善持久化配置代码)
 
 ## 0. 概述
